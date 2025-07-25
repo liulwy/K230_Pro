@@ -67,11 +67,6 @@ cut_roi = (600, 360, 360, 360)
 # 按钮初始化
 Mode_Change_button = Button(18, FPIOA.GPIO18, "LOW")  # 模式切换按钮
 
-# 激光笔控制引脚
-fpioa = FPIOA()
-fpioa.set_function(33, FPIOA.GPIO33)
-laser_pin = Pin(33, Pin.OUT)
-laser_pin.value(0)
 
 def witch_key(x, y):
     """判断按下的按钮是哪一个"""
@@ -98,9 +93,6 @@ def witch_key(x, y):
 def threshold_adjustment_mode(sensor):
     """阈值调整模式"""
     global Mode_Flag, threshold_dict
-
-    # 打开激光笔
-    laser_pin.value(1)
 
     # 清空当前的阈值
     for key in threshold_dict.keys():
@@ -209,8 +201,6 @@ def threshold_adjustment_mode(sensor):
         Display.show_image(ui_img, 0, 0, Display.LAYER_OSD3)
         time.sleep_ms(50)
 
-    # 关闭激光笔
-    laser_pin.value(0)
 
 try:
     # 初始化传感器
@@ -221,6 +211,7 @@ try:
 
     # 设置视频通道
     sensor.set_framesize(width=DISPLAY_WIDTH, height=DISPLAY_HEIGHT, chn=CAM_CHN_ID_0)
+    # sensor.set_pixformat(PIXEL_FORMAT_YUV_SEMIPLANAR_420, chn=CAM_CHN_ID_0)
     sensor.set_pixformat(PIXEL_FORMAT_YUV_SEMIPLANAR_420, chn=CAM_CHN_ID_0)
 
     # 设置AI处理通道
@@ -254,6 +245,8 @@ try:
         # 处理模式切换按钮
         if Mode_Change_button.read():
             Mode_Flag = (Mode_Flag + 1) % len(Mode_lst)
+            if Mode_Flag == 1:
+                Mode_Flag += 1 # 非屏幕长按不进入阈值调整模式
             print(f"切换到模式: {Mode_lst[Mode_Flag]}")
             time.sleep_ms(300)  # 防抖延时
 
@@ -335,9 +328,9 @@ try:
         time.sleep_ms(10)  # 短暂延时
 
 except KeyboardInterrupt as e:
-    print("程序被用户中断", e)
+    print("用户停止: ", e)
 except BaseException as e:
-    print("程序发生错误", e)
+    print(f"异常: {e}")
 finally:
     if isinstance(sensor, Sensor):
         sensor.stop()
