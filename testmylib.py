@@ -69,25 +69,25 @@ Mode_Change_button = Button(18, FPIOA.GPIO18, "LOW")  # 模式切换按钮
 
 
 def witch_key(x, y):
-    """判断按下的按钮是哪一个"""
-    if x < 80:  # 调整为新的按钮宽度
+    """判断按下的按钮是哪一个，恢复样例代码的按钮判断逻辑"""
+    if x < 160:  # 恢复原来的按钮宽度
         if y < 40:
             return "return"
         if y > 480 - 40:
             return "reset"
-        if y < 240:  # 调整开始位置
+        if not y > 60:  # 恢复原来的开始位置
             return None
-        if (y - 240) % 40 < 30:  # 调整间隔和高度
-            return str((y - 240) // 40)
-    elif x > 800 - 80:  # 调整为新的按钮宽度
+        if (y - 60) % 60 < 40:  # 恢复原来的间隔和高度
+            return str((y - 60) // 60)
+    elif x > 800 - 160:  # 恢复原来的按钮宽度
         if y < 40:
             return "change"
         if y > 480 - 40:
             return "save"
-        if y < 240:  # 调整开始位置
+        if not y > 60:  # 恢复原来的开始位置
             return None
-        if (y - 240) % 40 < 30:  # 调整间隔和高度
-            return str((y - 240) // 40 + 6)
+        if (y - 60) % 60 < 40:  # 恢复原来的间隔和高度
+            return str((y - 60) // 60 + 6)
     return None
 
 def threshold_adjustment_mode(sensor):
@@ -104,38 +104,45 @@ def threshold_adjustment_mode(sensor):
     button_color = (150, 150, 150)
     text_color = (0, 0, 0)
 
-    # 创建一个固定的UI画布，参照样例代码的做法
-    ui_img = image.Image(800, 480, image.RGB565)
-    ui_img.draw_rectangle(0, 0, 800, 480, color=(255, 255, 255), thickness=2, fill=True)
-
-    # 按钮--返回，编辑完成后返回
-    ui_img.draw_rectangle(0, 0, 160, 40, color=button_color, thickness=2, fill=True)
-    ui_img.draw_string_advanced(50, 0, 30, "返回", color=text_color)
-
-    # 按钮--切换，切换编辑的阈值对象
-    ui_img.draw_rectangle(800-160, 0, 160, 40, color=button_color, thickness=2, fill=True)
-    ui_img.draw_string_advanced(800-160+50, 0, 30, "切换", color=text_color)
-
-    # 按钮--归位，滑块归位
-    ui_img.draw_rectangle(0, 480-40, 160, 40, color=button_color, thickness=2, fill=True)
-    ui_img.draw_string_advanced(50, 480-40, 30, "归位", color=text_color)
-
-    # 按钮--保存，将当前阈值添加到阈值列表中
-    ui_img.draw_rectangle(800-160, 480-40, 160, 40, color=button_color, thickness=2, fill=True)
-    ui_img.draw_string_advanced(800-160+50, 480-40, 30, "保存", color=text_color)
-
-    # 绘制12个滑块按钮，左右各6个，位置更靠下以腾出更多图像显示空间
-    for j in [0, 800 - 80]:  # 减小按钮宽度为80
-        for i in range(240, 480-40, 40):  # 从240开始，间隔40，为图像留出更多空间
-            ui_img.draw_rectangle(j, i, 80, 30, color=button_color, thickness=2, fill=True)
-
     # 可以调多个阈值
     threshold_mode_lst = list(threshold_dict.keys())
     threshold_mode_idx = 0
     threshold_mode = threshold_mode_lst[threshold_mode_idx]
-    threshold_current = [0, 255, 0, 255, 0, 255]  # 初始阈值
+    # 初始阈值：L通道[0,100]，A/B通道[0,255]
+    threshold_current = [0, 100, 0, 255, 0, 255]  # L_min, L_max, A_min, A_max, B_min, B_max
+
+    # 添加按钮防抖变量
+    last_button_time = 0
+    button_debounce_delay = 300  # 300ms防抖延时，用于功能按钮
+    slider_debounce_delay = 120  # 100ms防抖延时，用于滑块调整
 
     while Mode_Flag == 1:  # 阈值调整模式
+        # 在每次循环开始时重新创建干净的UI画布，避免残留痕迹
+        ui_img = image.Image(800, 480, image.RGB565)
+        ui_img.draw_rectangle(0, 0, 800, 480, color=(255, 255, 255), thickness=2, fill=True)
+
+        # 重新绘制所有固定的UI元素
+        # 按钮--返回
+        ui_img.draw_rectangle(0, 0, 160, 40, color=button_color, thickness=2, fill=True)
+        ui_img.draw_string_advanced(50, 0, 30, "返回", color=text_color)
+
+        # 按钮--切换
+        ui_img.draw_rectangle(800-160, 0, 160, 40, color=button_color, thickness=2, fill=True)
+        ui_img.draw_string_advanced(800-160+50, 0, 30, "切换", color=text_color)
+
+        # 按钮--归位
+        ui_img.draw_rectangle(0, 480-40, 160, 40, color=button_color, thickness=2, fill=True)
+        ui_img.draw_string_advanced(50, 480-40, 30, "归位", color=text_color)
+
+        # 按钮--保存
+        ui_img.draw_rectangle(800-160, 480-40, 160, 40, color=button_color, thickness=2, fill=True)
+        ui_img.draw_string_advanced(800-160+50, 480-40, 30, "保存", color=text_color)
+
+        # 绘制12个滑块按钮
+        for j in [0, 800 - 160]:
+            for i in range(60, 420, 60):
+                ui_img.draw_rectangle(j, i, 160, 40, color=button_color, thickness=2, fill=True)
+
         # 获取摄像头图像 - 使用RGB888通道，参照样例使用CAM_CHN_ID_0
         cam_img = sensor.snapshot(chn=CAM_CHN_ID_0)
         if cam_img is None:
@@ -145,7 +152,7 @@ def threshold_adjustment_mode(sensor):
         # 裁剪图像ROI，参照样例
         cam_img_roi = cam_img.copy(roi=cut_roi)
 
-        # 根据当前阈值模式处理图像，完全参照样例的处理方式
+        # 根据当前阈值模式处理图像，完全参照样例代码的处理方式
         try:
             if threshold_mode == 'rect':
                 # 参照样例的处理方式
@@ -153,8 +160,18 @@ def threshold_adjustment_mode(sensor):
                 processed_img = processed_img.binary([threshold_current[:2]])
                 processed_img = processed_img.to_rgb565()
             elif threshold_mode == 'red_point' or threshold_mode == 'red_point_inblack':
-                # 参照样例的颜色处理方式
-                processed_img = cam_img_roi.binary([threshold_current])
+                # LAB阈值处理：L通道不需要偏移，A/B通道需要-128偏移
+                # L通道：直接使用[0,100]范围
+                # A/B通道：[0,255] -> [-128,127]
+                lab_threshold = [
+                    threshold_current[0],  # L_min: 直接使用
+                    threshold_current[1],  # L_max: 直接使用
+                    threshold_current[2] - 128,  # A_min: -128偏移
+                    threshold_current[3] - 128,  # A_max: -128偏移
+                    threshold_current[4] - 128,  # B_min: -128偏移
+                    threshold_current[5] - 128   # B_max: -128偏移
+                ]
+                processed_img = cam_img_roi.binary([lab_threshold])
                 processed_img = processed_img.to_rgb565()
             else:
                 processed_img = cam_img_roi
@@ -162,95 +179,98 @@ def threshold_adjustment_mode(sensor):
             print(f"图像处理错误: {e}")
             processed_img = cam_img_roi
 
-        # 参照样例：直接在固定UI画布上绘制处理后的图像，使用更大的显示区域
+        # 参照样例：直接在固定UI画布上绘制处理后的图像，使用样例的中央显示方式
         img_x = (800 - processed_img.width()) // 2
-        img_y = 50  # 从顶部50像素开始，为按钮留出空间
-        # 限制图像显示区域不超过底部按钮区域
-        max_img_height = 240 - 50  # 最大高度到滑块按钮开始位置
-        if processed_img.height() > max_img_height:
-            # 如果图像太高，需要缩放
-            scale = max_img_height / processed_img.height()
-            scaled_width = int(processed_img.width() * scale)
-            scaled_height = int(processed_img.height() * scale)
-            img_x = (800 - scaled_width) // 2
-            # 先清空图像显示区域
-            ui_img.draw_rectangle(80, 50, 800-160, 240-50, color=(0, 0, 0), thickness=2, fill=True)
-            # 缩放并绘制图像
-            ui_img.draw_image(processed_img, img_x, img_y, scale, scale)
-        else:
-            # 先清空图像显示区域
-            ui_img.draw_rectangle(80, 50, 800-160, 240-50, color=(0, 0, 0), thickness=2, fill=True)
-            # 直接绘制图像
-            ui_img.draw_image(processed_img, img_x, img_y)
+        img_y = (480 - processed_img.height()) // 2
 
-        # 绘制滑块标签和当前值，放在底部不遮挡图像
+        # 参照样例：直接在中央绘制图像，不需要额外的区域限制
+        ui_img.draw_image(processed_img, img_x, img_y)
+
+        # 绘制滑块标签和当前值，按钮内显示标识，按钮外显示数值
         slider_labels = ["L_min", "L_max", "A_min", "A_max", "B_min", "B_max"]
         for i in range(6):
-            y_pos = 240 + i * 40  # 从240开始，间隔40
-            # 清空并重新绘制左右按钮的标签
-            ui_img.draw_rectangle(2, y_pos + 5, 76, 20, color=button_color, thickness=1, fill=True)
-            ui_img.draw_rectangle(802-78, y_pos + 5, 76, 20, color=button_color, thickness=1, fill=True)
-            
-            # 绘制按钮标签
-            ui_img.draw_string_advanced(2, y_pos + 5, 16, f"-{slider_labels[i]}", color=text_color)
-            ui_img.draw_string_advanced(802-76, y_pos + 5, 16, f"+{slider_labels[i]}", color=text_color)
-            
-            # 在中间显示当前值，不遮挡图像
-            ui_img.draw_rectangle(90, y_pos + 5, 150, 20, color=(255, 255, 255), thickness=1, fill=True)
-            ui_img.draw_string_advanced(90, y_pos + 5, 16, f"{slider_labels[i]}: {threshold_current[i]}", color=text_color)
+            y_pos = 60 + i * 60  # 恢复原来的位置：从60开始，间隔60
 
-        # 显示当前模式，放在顶部
-        ui_img.draw_rectangle(170, 10, 300, 24, color=(255, 255, 255), thickness=2, fill=True)
-        ui_img.draw_string_advanced(170, 10, 20, f"当前模式: {threshold_mode}", color=text_color)
+            # 在按钮内显示标识
+            ui_img.draw_string_advanced(5, y_pos + 10, 16, f"-{slider_labels[i]}", color=text_color)
+            ui_img.draw_string_advanced(800-155, y_pos + 10, 16, f"+{slider_labels[i]}", color=text_color)
 
-        # 处理触摸事件，完全参照样例
+            # 在左侧按钮外面显示当前数值
+            ui_img.draw_string_advanced(165, y_pos + 10, 16, f"{threshold_current[i]}", color=text_color)
+
+        # 显示当前模式，参照样例放在合适位置
+        ui_img.draw_rectangle(170, 40, 300, 24, color=(255, 255, 255), thickness=2, fill=True)
+        ui_img.draw_string_advanced(170, 40, 20, f"当前模式: {threshold_mode}", color=text_color)
+
+        # 处理触摸事件，完全参照样例，添加防抖逻辑
         points = tp.read()
         if len(points) > 0:
+            current_time = time.ticks_ms()
             # 判断按下了哪个键
             button = witch_key(points[0].x, points[0].y)
             if button:
-                # 如果是返回键
-                if button == "return":
-                    Mode_Flag = 0  # 返回正常模式
-                    print("退出阈值调整模式")
-                    time.sleep_ms(500)  # 参照样例加延时
-                    break
-                # 如果是切换键
-                elif button == "change":
-                    threshold_mode_idx = (threshold_mode_idx + 1) % len(threshold_mode_lst)
-                    threshold_mode = threshold_mode_lst[threshold_mode_idx]
-                    # 重置当前阈值
-                    threshold_current = [0, 255, 0, 255, 0, 255]
-                    # 显示切换消息，参照样例，位置调整到不遮挡图像的区域
-                    ui_img.draw_rectangle(300, 450, 200, 25, color=button_color, thickness=2, fill=True)
-                    ui_img.draw_string_advanced(305, 452, 20, f"切换到:{threshold_mode}", color=text_color)
-                # 如果是归位键
-                elif button == "reset":
-                    threshold_current = [0, 255, 0, 255, 0, 255]  # 重置阈值
-                    # 显示归位消息，参照样例，位置调整
-                    ui_img.draw_rectangle(300, 450, 200, 25, color=button_color, thickness=2, fill=True)
-                    ui_img.draw_string_advanced(305, 452, 20, "滑块归零", color=text_color)
-                # 如果是保存键
-                elif button == "save":
-                    # 保存当前阈值，参照样例的保存方式
-                    if threshold_mode == 'rect':
-                        threshold_dict[threshold_mode].append(threshold_current[:2])
-                    elif threshold_mode == 'red_point' or threshold_mode == 'red_point_inblack':
-                        threshold_dict[threshold_mode].append(threshold_current)
-                    # 显示保存成功消息，参照样例，位置调整
-                    ui_img.draw_rectangle(300, 450, 200, 25, color=button_color, thickness=2, fill=True)
-                    ui_img.draw_string_advanced(305, 452, 20, "保存成功", color=text_color)
-                else:
-                    # 调整阈值滑块，参照样例的调整方式
-                    button_idx = int(button)
-                    if button_idx >= 6:
-                        # 增加阈值，参照样例使用+2的步长
-                        channel = button_idx - 6
-                        threshold_current[channel] = min(255, threshold_current[channel] + 2)
+                # 判断是滑块按钮还是功能按钮，使用不同的防抖延时
+                is_slider_button = button.isdigit()  # 数字按钮是滑块按钮
+                required_delay = slider_debounce_delay if is_slider_button else button_debounce_delay
+
+                if current_time - last_button_time > required_delay:
+                    last_button_time = current_time  # 更新最后按键时间
+
+                    # 如果是返回键
+                    if button == "return":
+                        Mode_Flag = 0  # 返回正常模式
+                        print("退出阈值调整模式")
+                        time.sleep_ms(500)  # 参照样例加延时
+                        break
+                    # 如果是切换键
+                    elif button == "change":
+                        threshold_mode_idx = (threshold_mode_idx + 1) % len(threshold_mode_lst)
+                        threshold_mode = threshold_mode_lst[threshold_mode_idx]
+                        # 重置当前阈值：L通道[0,100]，A/B通道[0,255]
+                        threshold_current = [0, 100, 0, 255, 0, 255]
+                        # 显示切换消息，参照样例的位置和样式
+                        ui_img.draw_rectangle(200, 200, 300, 40, color=button_color, thickness=2, fill=True)
+                        ui_img.draw_string_advanced(200, 200, 30, f"调整:{threshold_mode}", color=text_color)
+                    # 如果是归位键
+                    elif button == "reset":
+                        threshold_current = [0, 100, 0, 255, 0, 255]  # 重置阈值：L通道[0,100]，A/B通道[0,255]
+                        # 显示归位消息，参照样例的位置和样式
+                        ui_img.draw_rectangle(200, 200, 300, 40, color=button_color, thickness=2, fill=True)
+                        ui_img.draw_string_advanced(200, 200, 30, "滑块归零", color=text_color)
+                    # 如果是保存键
+                    elif button == "save":
+                        # 保存当前阈值，使用正确的LAB转换
+                        if threshold_mode == 'rect':
+                            threshold_dict[threshold_mode].append(threshold_current[:2])
+                        elif threshold_mode == 'red_point' or threshold_mode == 'red_point_inblack':
+                            # LAB阈值转换：L通道直接使用，A/B通道减128
+                            saved_threshold = [
+                                threshold_current[0],  # L_min: 直接使用
+                                threshold_current[1],  # L_max: 直接使用
+                                threshold_current[2] - 128,  # A_min: -128偏移
+                                threshold_current[3] - 128,  # A_max: -128偏移
+                                threshold_current[4] - 128,  # B_min: -128偏移
+                                threshold_current[5] - 128   # B_max: -128偏移
+                            ]
+                            threshold_dict[threshold_mode].append(saved_threshold)
+                        print(f"保存阈值: {threshold_dict[threshold_mode]}")
+                        # 显示保存成功消息，参照样例的位置和样式
+                        ui_img.draw_rectangle(200, 200, 300, 40, color=button_color, thickness=2, fill=True)
+                        ui_img.draw_string_advanced(200, 200, 30, "保存成功", color=text_color)
                     else:
-                        # 减少阈值，参照样例使用-2的步长
-                        channel = button_idx
-                        threshold_current[channel] = max(0, threshold_current[channel] - 2)
+                        # 调整阈值滑块，根据通道类型设置不同的范围
+                        button_idx = int(button)
+                        if button_idx >= 6:
+                            # 增加阈值，参照样例使用+2的步长
+                            channel = button_idx - 6
+                            if channel < 2:  # L通道：范围[0,100]
+                                threshold_current[channel] = min(100, threshold_current[channel] + 1)
+                            else:  # A/B通道：范围[0,255]
+                                threshold_current[channel] = min(255, threshold_current[channel] + 1)
+                        else:
+                            # 减少阈值，参照样例使用-2的步长
+                            channel = button_idx
+                            threshold_current[channel] = max(0, threshold_current[channel] - 1)
 
         # 参照样例直接显示UI，不需要额外的缩放处理
         img_show = image.Image(DISPLAY_WIDTH, DISPLAY_HEIGHT, image.RGB565)
@@ -269,7 +289,7 @@ try:
     sensor.set_vflip(False)
 
     # 设置视频通道
-    sensor.set_framesize(width=DISPLAY_WIDTH, height=DISPLAY_HEIGHT, chn=CAM_CHN_ID_0)
+    sensor.set_framesize(width=1920, height=1080, chn=CAM_CHN_ID_0)
     # sensor.set_pixformat(PIXEL_FORMAT_YUV_SEMIPLANAR_420, chn=CAM_CHN_ID_0)
     sensor.set_pixformat(Sensor.RGB565, chn=CAM_CHN_ID_0)
 
