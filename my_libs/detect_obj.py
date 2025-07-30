@@ -7,10 +7,6 @@ import aicube
 from media.media import *
 import os
 
-
-# ObjectDetector类
-#主要用于加载模型、预处理图像、执行推理和后处理检测结果
-# 支持AnchorBaseDet、GFLDet和AnchorFreeDet模型类型
 class ObjectDetector:
     def __init__(self, config_path, root_path=""):
         # 获取配置文件的目录路径
