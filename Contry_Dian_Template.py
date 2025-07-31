@@ -3,11 +3,12 @@ import time
 from media.sensor import *
 from media.display import *
 from media.media import *
-from machine import FPIOA, Pin, TOUCH
+from machine import FPIOA, Pin, TOUCH, UART
 import gc
 import my_libs.detect_obj
 from my_libs.detect_obj import ObjectDetector
 from my_libs.my_button import Button
+from my_libs.perspective import *
 
 
 
@@ -66,12 +67,30 @@ else:
 OUT_RGB888P_WIDTH = ALIGN_UP(1080, 16)
 OUT_RGB888P_HEIGH = 720
 
+IMAGE_WIDTH = 640
+IMAGE_HEIGHT = 480
+
 # 裁剪图像的ROI，格式为(x, y, w, h)
-cut_roi = (600, 360, 360, 360)
+roi_w = IMAGE_WIDTH // 2
+roi_h = IMAGE_HEIGHT // 2
+roi_x = (IMAGE_WIDTH - roi_w) // 2
+roi_y = (IMAGE_HEIGHT - roi_h) // 2
+cut_roi = (roi_x, roi_y, roi_w, roi_h)
 
 # 按钮初始化
 Mode_Change_button = Button(18, FPIOA.GPIO18, "LOW")  # 模式切换按钮
 Click_Button = Button(19, FPIOA.GPIO19, "LOW")  # 点击按钮
+
+# 串口初始化
+fpioa = FPIOA()
+fpioa.set_function(11, FPIOA.UART2_TXD)
+fpioa.set_function(12, FPIOA.UART2_RXD)
+uart = UART(UART.UART2, baudrate=115200, bits=UART.EIGHTBITS, parity=UART.PARITY_NONE, stop=UART.STOPBITS_ONE)
+Trans_current_time = 0 # 串口传输时间
+Trans_last_time = 0
+
+
+
 
 
 def witch_key(x, y):
@@ -310,6 +329,45 @@ def My_Find_Point(image, threshold_used):
     return blobs
 
 
+def get_rect_center_perspective(corners):
+    # corners: [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]，顺序：左上、右上、右下、左下
+    src = corners
+    w, h = 200, 200  # 目标矩形尺寸
+    dst = [[0,0],[w-1,0],[w-1,h-1],[0,h-1]]
+    H = get_perspective_transform(src, dst)
+    center_dst = (w/2, h/2)
+    H_inv = mat_inv(H)
+    center_src = perspective_transform_point(center_dst, H_inv)
+    return int(center_src[0]), int(center_src[1])
+
+
+def is_reasonable_rect(corners, aspect_min=0.5, aspect_max=2.0, angle_tol=25):
+    # corners: [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]，顺序：左上、右上、右下、左下
+    import math
+    def dist(p1, p2):
+        return ((p1[0]-p2[0])**2 + (p1[1]-p2[1])**2) ** 0.5
+    def angle(p0, p1, p2):
+        # 计算p1顶点的夹角
+        a = dist(p1, p0)
+        b = dist(p1, p2)
+        c = dist(p0, p2)
+        if a == 0 or b == 0:
+            return 0
+        cos_theta = (a*a + b*b - c*c) / (2*a*b)
+        cos_theta = max(-1, min(1, cos_theta))
+        return math.degrees(math.acos(cos_theta))
+    # 长宽比
+    w = dist(corners[0], corners[1])
+    h = dist(corners[1], corners[2])
+    aspect = w / h if h != 0 else 0
+    if not (aspect_min <= aspect <= aspect_max):
+        return False
+    # 四个角接近90度
+    for i in range(4):
+        ang = angle(corners[i-1], corners[i], corners[(i+1)%4])
+        if abs(ang-90) > angle_tol:
+            return False
+    return True
 
 # 查找矩形函数
 # 该函数用于查找图像中的黑色矩形，并返回角点坐标和中心点
@@ -337,28 +395,28 @@ def My_Find_Rect(image, threshold_used):
         # 应用阈值，找到黑色区域
         img_rect = img_rect.binary(threshold_used)
 
-        # 查找矩形，参考23年代码的参数设置
-        rects = img_rect.find_rects(threshold=30000)  # 小于threshold的矩形将被过滤
-
+        rects = img_rect.find_rects(threshold=50000)
+        reasonable_rects = []
         if rects:
-            # 找到面积最大的矩形
+            for rect in rects:
+                corners = rect.corners()
+                if is_reasonable_rect(corners, aspect_min=0.3, aspect_max=3.0, angle_tol=30):  # 只保留接近正方形且角度接近90度的
+                    reasonable_rects.append(rect)
+            # 找到面积最大的合理矩形
             max_rect = None
             max_rect_area = 0
-
-            for rect in rects:
+            for rect in reasonable_rects:
                 if max_rect is None or rect.magnitude() > max_rect_area:
                     max_rect = rect
                     max_rect_area = rect.magnitude()
-
             if max_rect:
                 # 获取角点
                 corners = max_rect.corners()
                 result['corners'] = [[p[0], p[1]] for p in corners]
 
                 # 计算中心点
-                center_x = sum(p[0] for p in corners) // 4
-                center_y = sum(p[1] for p in corners) // 4
-                result['center'] = [center_x, center_y]
+                center_point = get_rect_center_perspective(result['corners'])
+                result['center'] = list(center_point)
                 result['found'] = True
 
                 # 在原图上绘制矩形边界和角点
@@ -373,7 +431,7 @@ def My_Find_Rect(image, threshold_used):
                     image.draw_circle(p[0], p[1], 5, color=(255, 0, 0))
 
                 # 绘制中心点
-                image.draw_cross(center_x, center_y, 10, color=(255, 255, 0), thickness=3)
+                image.draw_cross(center_point[0], center_point[1], 10, color=(255, 255, 0), thickness=3)
 
     except Exception as e:
         print(f"矩形检测错误: {e}")
@@ -388,7 +446,7 @@ try:
     sensor.set_vflip(False)
 
     # 设置视频通道
-    sensor.set_framesize(width=800, height=480, chn=CAM_CHN_ID_0)
+    sensor.set_framesize(width=IMAGE_WIDTH, height=IMAGE_HEIGHT, chn=CAM_CHN_ID_0)
     # sensor.set_pixformat(PIXEL_FORMAT_YUV_SEMIPLANAR_420, chn=CAM_CHN_ID_0)
     sensor.set_pixformat(Sensor.RGB565, chn=CAM_CHN_ID_0)
 
@@ -406,11 +464,6 @@ try:
     else:
         Display.init(Display.LT9611, to_ide=True)
 
-    # 非绑定模式不需要OSD图层
-    # osd_img = image.Image(DISPLAY_WIDTH, DISPLAY_HEIGHT, image.ARGB8888)
-
-#    # 初始化检测器
-#    detector = ObjectDetector("/sdcard/mp_deployment_source/deploy_config.json")
 
     # 初始化媒体
     MediaManager.init()
@@ -426,6 +479,10 @@ try:
             if Mode_Flag == 1:
                 Mode_Flag += 1 # 非屏幕长按不进入阈值调整模式
             print(f"切换到模式: {Mode_lst[Mode_Flag]}")
+            img_show = image.Image(DISPLAY_WIDTH, DISPLAY_HEIGHT, image.RGB565)
+            img_show.clear(color=(255, 255, 255))  # 设置为全白
+            img_show.draw_string_advanced(10, 10, 30, f"当前模式: {Mode_lst[Mode_Flag]}", color=(255, 0, 0))
+            Show_Img_2_Screen(img_show)
             time.sleep_ms(300)  # 防抖延时
 
         # 处理不同模式
@@ -447,67 +504,6 @@ try:
 
         elif Mode_Flag == 1:  # 阈值调整模式
             threshold_adjustment_mode(sensor)
-
-#        elif Mode_Flag == 2:  # 目标检测模式
-#            # 获取摄像头图像（用于显示和目标检测）
-#            cam_img = sensor.snapshot(chn=CAM_CHN_ID_0)  # 用于显示的YUV图像
-#            rgb888p_img = sensor.snapshot(chn=CAM_CHN_ID_2)  # 用于AI检测的RGB图像
-
-#            if cam_img is None or rgb888p_img is None:
-#                continue
-
-#            # 进行目标检测
-#            detections = detector.get_detection_results(rgb888p_img)
-
-#            # 创建显示图像，将摄像头图像作为背景
-#            display_img = image.Image(DISPLAY_WIDTH, DISPLAY_HEIGHT, image.RGB565)
-#            display_img.clear()
-#            # 绘制摄像头图像作为背景
-#            display_img.draw_image(cam_img, 0, 0, DISPLAY_WIDTH/cam_img.width(), DISPLAY_HEIGHT/cam_img.height())
-
-#            # 在显示图像上绘制检测结果
-#            for det in detections:
-#                # 坐标转换：AI通道尺寸 → 显示尺寸
-#                scale_x = DISPLAY_WIDTH / OUT_RGB888P_WIDTH
-#                scale_y = DISPLAY_HEIGHT / OUT_RGB888P_HEIGH
-
-#                x1, y1, x2, y2 = det["coordinates"]
-#                disp_x1 = int(x1 * scale_x)
-#                disp_y1 = int(y1 * scale_y)
-#                disp_x2 = int(x2 * scale_x)
-#                disp_y2 = int(y2 * scale_y)
-
-#                # 计算宽度和高度
-#                w = disp_x2 - disp_x1
-#                h = disp_y2 - disp_y1
-
-#                # 获取类别对应的颜色
-#                class_id = det["class_id"]
-#                color_index = class_id % len(color_four)
-#                color = color_four[color_index][1:]  # 取RGB部分，忽略第一个alpha值
-
-#                # 绘制边界框
-#                display_img.draw_rectangle(disp_x1, disp_y1, w, h, color=color, thickness=2)
-
-#                # 显示标签和置信度
-#                label = det['label']
-#                score = det['confidence']
-#                label_text = f"{label}: {score:.2f}"
-
-#                # 计算文本位置，确保不会超出屏幕顶部
-#                text_y = max(20, disp_y1 - 20)
-
-#                display_img.draw_string_advanced(
-#                    disp_x1,     # X坐标
-#                    text_y,      # Y坐标
-#                    24,          # 字体大小
-#                    label_text,  # 文本内容
-#                    color=color  # 颜色使用同框的颜色
-#                )
-
-#            # 直接显示合成图像，不使用层级
-#            Display.show_image(display_img, 0, 0)
-
 
 
 
@@ -531,6 +527,8 @@ try:
             if cam_img is None:
                 continue
 
+            Trans_current_time = time.ticks_ms()
+
             # 查找黑色矩形
             rect_info = My_Find_Rect(cam_img, threshold_dict['rect'])
 
@@ -541,6 +539,9 @@ try:
                                         rect_info['corners'][1][1] - rect_info['corners'][0][1],
                                         color=(0, 255, 0), thickness=2)
                 cam_img.draw_circle(rect_info['center'][0], rect_info['center'][1], 5, color=(255, 0, 0), thickness=2)
+
+                if Trans_current_time - Trans_last_time > 20:# 传输间隔大于20ms
+                    uart.write("TP: {}, {}\n".format(rect_info['center'][0], rect_info['center'][1]))
 
             else:
                 # 未找到矩形时的提示
